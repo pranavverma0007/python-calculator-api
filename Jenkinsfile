@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        SONAR_HOST_URL = 'http://localhost:9000'
-        SONAR_AUTH_TOKEN = credentials('sonar-token') 
+        SONAR_HOST_URL = 'http://172.30.68.218:9000'  // Your WSL IP
+        SONAR_AUTH_TOKEN = credentials('sonar-token')
         
         APP_NAME = 'python-calculator-api'
         DOCKER_IMAGE = 'calculator-api'
@@ -20,7 +20,6 @@ pipeline {
                             pip install --upgrade pip
                             pip install -r requirements.txt
                             pip install pytest pytest-cov
-                            # Create pytest.xml for Jenkins to parse
                             pytest test_app.py --junitxml=pytest.xml --cov=. --cov-report=xml --cov-report=term
                         '''
                     }
@@ -28,7 +27,6 @@ pipeline {
             }
             post {
                 always {
-                    // Archive test results - Jenkins will parse this
                     junit allowEmptyResults: true, testResults: '**/pytest.xml'
                 }
             }
@@ -37,39 +35,35 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo 'Running SonarQube analysis...'
-                script {
-                    sh '''
-                        docker run --rm \
-                            -v ${PWD}:/usr/src \
-                            -w /usr/src \
-                            sonarsource/sonar-scanner-cli:latest \
-                            -Dsonar.host.url=${SONAR_HOST_URL} \
-                            -Dsonar.login=${SONAR_AUTH_TOKEN} \
-                            -Dsonar.projectKey=python-calculator-api \
-                            -Dsonar.projectName="Python Calculator API" \
-                            -Dsonar.sources=. \
-                            -Dsonar.exclusions="**/venv/**,**/__pycache__/**,test_*.py" \
-                            -Dsonar.tests=. \
-                            -Dsonar.test.inclusions="test_*.py" \
-                            -Dsonar.python.coverage.reportPaths=coverage.xml \
-                            -Dsonar.python.version=3.11
-                    '''
-                }
+                sh '''
+                    docker run --rm \
+                        -v ${PWD}:/usr/src \
+                        -w /usr/src \
+                        sonarsource/sonar-scanner-cli:latest \
+                        -Dsonar.host.url=${SONAR_HOST_URL} \
+                        -Dsonar.login=${SONAR_AUTH_TOKEN} \
+                        -Dsonar.projectKey=python-calculator-api \
+                        -Dsonar.projectName="Python Calculator API" \
+                        -Dsonar.sources=. \
+                        -Dsonar.exclusions="**/venv/**,**/__pycache__/**,test_*.py" \
+                        -Dsonar.tests=. \
+                        -Dsonar.test.inclusions="test_*.py" \
+                        -Dsonar.python.coverage.reportPaths=coverage.xml \
+                        -Dsonar.python.version=3.11
+                '''
             }
         }
 
         stage('Quality Gate Check') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
-                    script {
-                        sh '''
-                            docker run --rm \
-                                sonarsource/sonar-scanner-cli:latest \
-                                sonar-quality-gate --wait \
-                                -Dsonar.host.url=${SONAR_HOST_URL} \
-                                -Dsonar.login=${SONAR_AUTH_TOKEN}
-                        '''
-                    }
+                    sh '''
+                        docker run --rm \
+                            sonarsource/sonar-scanner-cli:latest \
+                            sonar-quality-gate --wait \
+                            -Dsonar.host.url=${SONAR_HOST_URL} \
+                            -Dsonar.login=${SONAR_AUTH_TOKEN}
+                    '''
                 }
             }
         }
