@@ -19,41 +19,24 @@ pipeline {
             }
         }
 
-        stage('Setup Python Environment') {
-            steps {
-                echo 'Setting up Python environment...'
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                    pip install pytest pytest-cov
-                '''
-            }
-        }
-
         stage('Run Unit Tests with Coverage') {
             steps {
-                echo 'Running unit tests...'
-                sh '''
-                    . venv/bin/activate
-                    pytest test_app.py --cov=. --cov-report=xml --cov-report=term
-                '''
+                echo 'Running unit tests in Docker container...'
+                script {
+                    docker.image('python:3.11-slim').inside {
+                        sh '''
+                            pip install --upgrade pip
+                            pip install -r requirements.txt
+                            pip install pytest pytest-cov
+                            pytest test_app.py --cov=. --cov-report=xml --cov-report=term
+                        '''
+                    }
+                }
             }
             post {
                 always {
                     // Archive test results
                     junit allowEmptyResults: true, testResults: '**/pytest.xml'
-                    
-                    // Publish coverage report
-                    publishHTML(target: [
-                        allowMissing: false,
-                        alwaysLinkToLastBuild: false,
-                        keepAll: true,
-                        reportDir: '.',
-                        reportFiles: 'coverage.xml',
-                        reportName: 'Coverage Report'
-                    ])
                 }
             }
         }
@@ -66,16 +49,18 @@ pipeline {
                     sh '''
                         docker run --rm \
                             -v ${PWD}:/usr/src \
-                            -v /var/run/docker.sock:/var/run/docker.sock \
+                            -w /usr/src \
                             sonarsource/sonar-scanner-cli:latest \
                             -Dsonar.host.url=${SONAR_HOST_URL} \
                             -Dsonar.login=${SONAR_AUTH_TOKEN} \
                             -Dsonar.projectKey=python-calculator-api \
+                            -Dsonar.projectName="Python Calculator API" \
                             -Dsonar.sources=. \
-                            -Dsonar.exclusions=**/venv/**,**/__pycache__/** \
+                            -Dsonar.exclusions="**/venv/**,**/__pycache__/**,test_*.py" \
                             -Dsonar.tests=. \
-                            -Dsonar.test.inclusions=test_*.py \
-                            -Dsonar.python.coverage.reportPaths=coverage.xml
+                            -Dsonar.test.inclusions="test_*.py" \
+                            -Dsonar.python.coverage.reportPaths=coverage.xml \
+                            -Dsonar.python.version=3.11
                     '''
                 }
             }
@@ -85,7 +70,6 @@ pipeline {
             steps {
                 echo 'Waiting for SonarQube quality gate...'
                 script {
-                    // Wait for quality gate results
                     timeout(time: 5, unit: 'MINUTES') {
                         sh '''
                             docker run --rm \
@@ -125,7 +109,10 @@ pipeline {
                 sh '''
                     sleep 5
                     curl -f http://localhost:5000/health || exit 1
-                    curl -f -X POST http://localhost:5000/add -H "Content-Type: application/json" -d '{"a":5,"b":3}' || exit 1
+                    curl -f -X POST http://localhost:5000/add \
+                        -H "Content-Type: application/json" \
+                        -d '{"a":5,"b":3}' || exit 1
+                    echo "All tests passed!"
                 '''
             }
         }
@@ -157,9 +144,8 @@ pipeline {
                 ========================================
                 Check the following:
                 1. Is SonarQube container running? (docker ps | grep sonarqube)
-                2. Check test failures in the test report
-                3. Check SonarQube quality gates at http://localhost:9000
-                4. Review Jenkins console output for specific errors
+                2. Check SonarQube quality gates at http://localhost:9000
+                3. Review Jenkins console output for specific errors
                 ========================================
             '''
         }
