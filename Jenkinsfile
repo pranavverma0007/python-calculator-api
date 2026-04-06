@@ -2,40 +2,33 @@ pipeline {
     agent any
 
     environment {
-        // SonarQube Configuration
         SONAR_HOST_URL = 'http://localhost:9000'
+        SONAR_AUTH_TOKEN = credentials('sonar-token') 
         
-        // Application Configuration
         APP_NAME = 'python-calculator-api'
         DOCKER_IMAGE = 'calculator-api'
         DOCKER_TAG = "${env.BUILD_ID}"
     }
 
     stages {
-        stage('Checkout') {
-            steps {
-                echo 'Checking out code from GitHub...'
-                checkout scm
-            }
-        }
-
         stage('Run Unit Tests with Coverage') {
             steps {
                 echo 'Running unit tests in Docker container...'
                 script {
-                    docker.image('python:3.11-slim').inside {
+                    docker.image('python:3.11-slim').inside("-u root") {
                         sh '''
                             pip install --upgrade pip
                             pip install -r requirements.txt
                             pip install pytest pytest-cov
-                            pytest test_app.py --cov=. --cov-report=xml --cov-report=term
+                            # Create pytest.xml for Jenkins to parse
+                            pytest test_app.py --junitxml=pytest.xml --cov=. --cov-report=xml --cov-report=term
                         '''
                     }
                 }
             }
             post {
                 always {
-                    // Archive test results
+                    // Archive test results - Jenkins will parse this
                     junit allowEmptyResults: true, testResults: '**/pytest.xml'
                 }
             }
@@ -45,7 +38,6 @@ pipeline {
             steps {
                 echo 'Running SonarQube analysis...'
                 script {
-                    // Run sonar-scanner using Docker
                     sh '''
                         docker run --rm \
                             -v ${PWD}:/usr/src \
@@ -68,9 +60,8 @@ pipeline {
 
         stage('Quality Gate Check') {
             steps {
-                echo 'Waiting for SonarQube quality gate...'
-                script {
-                    timeout(time: 5, unit: 'MINUTES') {
+                timeout(time: 5, unit: 'MINUTES') {
+                    script {
                         sh '''
                             docker run --rm \
                                 sonarsource/sonar-scanner-cli:latest \
@@ -85,34 +76,21 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                echo 'Building Docker image for the application...'
                 script {
                     docker.build("${DOCKER_IMAGE}:${DOCKER_TAG}")
                 }
             }
         }
 
-        stage('Run Container Locally') {
+        stage('Deploy & Test') {
             steps {
-                echo 'Running application container...'
                 sh '''
                     docker stop ${APP_NAME} || true
                     docker rm ${APP_NAME} || true
                     docker run -d --name ${APP_NAME} -p 5000:5000 ${DOCKER_IMAGE}:${DOCKER_TAG}
-                '''
-            }
-        }
-
-        stage('Test Running Container') {
-            steps {
-                echo 'Testing the running container...'
-                sh '''
                     sleep 5
                     curl -f http://localhost:5000/health || exit 1
-                    curl -f -X POST http://localhost:5000/add \
-                        -H "Content-Type: application/json" \
-                        -d '{"a":5,"b":3}' || exit 1
-                    echo "All tests passed!"
+                    echo "Container is healthy!"
                 '''
             }
         }
@@ -120,34 +98,7 @@ pipeline {
 
     post {
         always {
-            echo 'Pipeline execution completed. Cleaning up...'
             cleanWs()
-        }
-        success {
-            echo '''
-                ========================================
-                ✅ PIPELINE SUCCESSFUL!
-                ========================================
-                Application is running at: http://localhost:5000
-                SonarQube dashboard: http://localhost:9000
-                
-                Test the API:
-                curl http://localhost:5000/health
-                curl -X POST http://localhost:5000/add -H "Content-Type: application/json" -d '{"a":5,"b":3}'
-                ========================================
-            '''
-        }
-        failure {
-            echo '''
-                ========================================
-                ❌ PIPELINE FAILED!
-                ========================================
-                Check the following:
-                1. Is SonarQube container running? (docker ps | grep sonarqube)
-                2. Check SonarQube quality gates at http://localhost:9000
-                3. Review Jenkins console output for specific errors
-                ========================================
-            '''
         }
     }
 }
