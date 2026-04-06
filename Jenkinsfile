@@ -57,13 +57,18 @@ pipeline {
         stage('Quality Gate Check') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
-                    sh '''
-                        docker run --rm \
-                            sonarsource/sonar-scanner-cli:latest \
-                            sonar-quality-gate --wait \
-                            -Dsonar.host.url=${SONAR_HOST_URL} \
-                            -Dsonar.login=${SONAR_AUTH_TOKEN}
-                    '''
+                    script {
+                        sh '''
+                            docker run --rm \
+                                -v ${PWD}:/usr/src \
+                                -w /usr/src \
+                                sonarsource/sonar-scanner-cli:latest \
+                                -Dsonar.host.url=${SONAR_HOST_URL} \
+                                -Dsonar.login=${SONAR_AUTH_TOKEN} \
+                                -Dsonar.projectKey=python-calculator-api \
+                                -Dsonar.qualitygate.wait=true
+                        '''
+                    }
                 }
             }
         }
